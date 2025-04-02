@@ -1,120 +1,182 @@
 import pandas as pd
-import numpy as np
-from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-# 1. Load the dataset
-def load_data(file_path):
-    try:
-        # Assuming the dataset is a CSV file downloaded from Kaggle
-        df = pd.read_csv(file_path)
-        print("Dataset loaded successfully!")
-        print("First few rows of the dataset:")
-        print(df.head())
-        return df
-    except Exception as e:
-        print(f"Error loading dataset: {e}")
-        return None
+def preprocess_rainfall_data(file_path):
+    """
+    Preprocess the rainfall data from the CSV file.
+    
+    Parameters:
+    -----------
+    file_path : str
+        Path to the rainfall_yearly.csv file
+    
+    Returns:
+    --------
+    pandas.DataFrame
+        Cleaned and preprocessed dataframe
+    """
+    # Read the CSV file
+    df = pd.read_csv(file_path)
+    
+    # Convert column names to lowercase for consistency
+    df.columns = [col.lower() for col in df.columns]
+    
+    # Melt the dataframe to convert months from columns to rows
+    months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+    df_melted = pd.melt(
+        df,
+        id_vars=['subdivision', 'year'],
+        value_vars=months,
+        var_name='month',
+        value_name='rainfall'
+    )
+    
+    # Create a month number column for easier sorting
+    month_to_num = {month: i+1 for i, month in enumerate(months)}
+    df_melted['month_num'] = df_melted['month'].map(month_to_num)
+    
+    # Sort by subdivision, year, and month
+    df_melted = df_melted.sort_values(['subdivision', 'year', 'month_num'])
+    
+    # Add a date column (first day of each month) for time series analysis
+    df_melted['date'] = pd.to_datetime(df_melted['year'].astype(str) + '-' + 
+                                        df_melted['month_num'].astype(str) + '-01')
+    
+    # Check for missing values
+    missing_values = df_melted['rainfall'].isna().sum()
+    print(f"Number of missing rainfall values: {missing_values}")
+    
+    # Replace any missing values with the mean for that month and subdivision
+    if missing_values > 0:
+        df_melted['rainfall'] = df_melted.groupby(['subdivision', 'month'])['rainfall'].transform(
+            lambda x: x.fillna(x.mean())
+        )
+    
+    # Add season column
+    season_map = {
+        1: 'Winter', 2: 'Winter',
+        3: 'Spring', 4: 'Spring', 5: 'Spring',
+        6: 'Summer', 7: 'Summer', 8: 'Summer',
+        9: 'Autumn', 10: 'Autumn', 11: 'Autumn',
+        12: 'Winter'
+    }
+    df_melted['season'] = df_melted['month_num'].map(season_map)
+    
+    # Create seasonal aggregates
+    seasonal_df = df_melted.groupby(['subdivision', 'year', 'season'])['rainfall'].sum().reset_index()
+    
+    # Calculate year-on-year changes
+    df_melted['prev_year_rainfall'] = df_melted.groupby(['subdivision', 'month'])['rainfall'].shift(1)
+    df_melted['yoy_change'] = df_melted['rainfall'] - df_melted['prev_year_rainfall']
+    df_melted['yoy_change_pct'] = (df_melted['yoy_change'] / df_melted['prev_year_rainfall']) * 100
+    
+    return {
+        'monthly': df_melted,
+        'seasonal': seasonal_df,
+        'original': df
+    }
 
-# 2. Clean the dataset
-def clean_data(df):
-    if df is None:
-        return None
+def analyze_rainfall_data(data_dict):
+    """
+    Perform basic analysis on the preprocessed rainfall data.
+    
+    Parameters:
+    -----------
+    data_dict : dict
+        Dictionary containing preprocessed dataframes
+    
+    Returns:
+    --------
+    dict
+        Dictionary containing analysis results
+    """
+    monthly_df = data_dict['monthly']
+    seasonal_df = data_dict['seasonal']
+    
+    # Calculate basic statistics for monthly rainfall
+    monthly_stats = monthly_df.groupby('month')['rainfall'].agg(['mean', 'median', 'min', 'max', 'std']).reset_index()
+    
+    # Calculate seasonal statistics
+    seasonal_stats = seasonal_df.groupby('season')['rainfall'].agg(['mean', 'median', 'min', 'max', 'std']).reset_index()
+    
+    # Calculate yearly statistics
+    yearly_stats = monthly_df.groupby(['subdivision', 'year'])['rainfall'].sum().reset_index()
+    yearly_stats = yearly_stats.groupby('year')['rainfall'].agg(['mean', 'median', 'min', 'max', 'std']).reset_index()
+    
+    return {
+        'monthly_stats': monthly_stats,
+        'seasonal_stats': seasonal_stats,
+        'yearly_stats': yearly_stats
+    }
 
-    # Display basic info about the dataset
-    print("\nDataset Info:")
-    print(df.info())
-    print("\nMissing Values:")
-    print(df.isnull().sum())
-
-    # Handle missing values
-    # For numerical columns (e.g., rainfall), fill with median
-    numerical_cols = df.select_dtypes(include=[np.number]).columns
-    for col in numerical_cols:
-        if df[col].isnull().sum() > 0:
-            df[col].fillna(df[col].median(), inplace=True)
-
-    # For categorical columns (e.g., SUBDIVISION), fill with mode
-    categorical_cols = df.select_dtypes(include=['object']).columns
-    for col in categorical_cols:
-        if df[col].isnull().sum() > 0:
-            df[col].fillna(df[col].mode()[0], inplace=True)
-
-    print("\nMissing values after cleaning:")
-    print(df.isnull().sum())
-
-    return df
-
-# 3. Convert data types and create features
-def process_data(df):
-    if df is None:
-        return None
-
-    # Convert YEAR and MONTH to appropriate types if needed
-    if 'YEAR' in df.columns and df['YEAR'].dtype == 'object':
-        df['YEAR'] = pd.to_numeric(df['YEAR'], errors='coerce')
-
-    if 'MONTH' in df.columns and df['MONTH'].dtype == 'object':
-        df['MONTH'] = pd.to_numeric(df['MONTH'], errors='coerce')
-
-    # Create a date column for time series analysis (if YEAR and MONTH exist)
-    if 'YEAR' in df.columns and 'MONTH' in df.columns:
-        df['DATE'] = pd.to_datetime(df['YEAR'].astype(str) + '-' + df['MONTH'].astype(str), format='%Y-%m', errors='coerce')
-
-    # Sort by date if DATE column exists
-    if 'DATE' in df.columns:
-        df = df.sort_values(by='DATE')
-
-    # Ensure rainfall data is numeric
-    rainfall_cols = [col for col in df.columns if 'RAIN' in col.upper() or 'PRECIP' in col.upper()]
-    for col in rainfall_cols:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-
-    return df
-
-# 4. Normalize/Scale numerical data
-def scale_data(df):
-    if df is None:
-        return None
-
-    # Identify numerical columns to scale (exclude YEAR, MONTH, etc.)
-    numerical_cols = df.select_dtypes(include=[np.number]).columns
-    exclude_cols = ['YEAR', 'MONTH']  # Add other columns to exclude if needed
-    scale_cols = [col for col in numerical_cols if col not in exclude_cols]
-
-    if scale_cols:
-        scaler = StandardScaler()
-        df[scale_cols] = scaler.fit_transform(df[scale_cols])
-        print("\nData scaled using StandardScaler.")
-        return df, scaler
-    else:
-        print("\nNo numerical columns to scale.")
-        return df, None
-
-# 5. Save preprocessed data
-def save_preprocessed_data(df, file_path='preprocessed_rainfall.csv'):
-    if df is not None:
-        df.to_csv(file_path, index=False)
-        print(f"\nPreprocessed data saved to {file_path}")
-
-def main():
-    # Specify the path to your downloaded CSV file from Kaggle
-    file_path = 'Datasets/Rainfall/rainfall_in_india.csv'  # Update this path
-
-    # Load data
-    df = load_data(file_path)
-
-    # Clean data
-    df = clean_data(df)
-
-    if df is not None:
-        # Process data (convert types, create features)
-        df = process_data(df)
-
-        # Scale numerical data
-        df, scaler = scale_data(df)
-
-        # Save preprocessed data
-        save_preprocessed_data(df)
+def visualize_rainfall_data(data_dict):
+    """
+    Create visualizations for the rainfall data.
+    
+    Parameters:
+    -----------
+    data_dict : dict
+        Dictionary containing preprocessed dataframes
+    """
+    monthly_df = data_dict['monthly']
+    
+    # Set the style for the plots
+    plt.style.use('seaborn-v0_8-whitegrid')
+    
+    # Monthly rainfall distribution (box plot)
+    plt.figure(figsize=(14, 7))
+    sns.boxplot(x='month', y='rainfall', data=monthly_df)
+    plt.title('Monthly Rainfall Distribution (1901-1908)')
+    plt.xlabel('Month')
+    plt.ylabel('Rainfall (mm)')
+    plt.savefig('monthly_rainfall_distribution.png')
+    plt.close()
+    
+    # Time series of total yearly rainfall
+    yearly_total = monthly_df.groupby(['year'])['rainfall'].sum().reset_index()
+    plt.figure(figsize=(14, 7))
+    plt.plot(yearly_total['year'], yearly_total['rainfall'], marker='o')
+    plt.title('Total Yearly Rainfall (1901-1908)')
+    plt.xlabel('Year')
+    plt.ylabel('Total Rainfall (mm)')
+    plt.grid(True)
+    plt.savefig('yearly_rainfall_trend.png')
+    plt.close()
+    
+    # Heatmap of monthly rainfall
+    pivot_df = monthly_df.pivot_table(index='year', columns='month', values='rainfall')
+    plt.figure(figsize=(14, 8))
+    sns.heatmap(pivot_df, cmap='Blues', annot=True, fmt='.1f')
+    plt.title('Monthly Rainfall Heatmap (1901-1908)')
+    plt.savefig('monthly_rainfall_heatmap.png')
+    plt.close()
 
 if __name__ == "__main__":
-    main()
+    # Path to the CSV file
+    file_path = "../Datasets/Rainfall/rainfall_yearly.csv"
+    
+    # Preprocess the data
+    data_dict = preprocess_rainfall_data(file_path)
+    
+    # Analyze the data
+    analysis_results = analyze_rainfall_data(data_dict)
+    
+    # Visualize the data
+    visualize_rainfall_data(data_dict)
+    
+    # Display some basic statistics
+    print("\nMonthly Rainfall Statistics:")
+    print(analysis_results['monthly_stats'])
+    
+    print("\nSeasonal Rainfall Statistics:")
+    print(analysis_results['seasonal_stats'])
+    
+    print("\nYearly Rainfall Statistics:")
+    print(analysis_results['yearly_stats'])
+    
+    # Save the processed data
+    data_dict['monthly'].to_csv('processed_monthly_rainfall.csv', index=False)
+    data_dict['seasonal'].to_csv('processed_seasonal_rainfall.csv', index=False)
+    
+    print("\nPreprocessing completed. Output files saved.")
