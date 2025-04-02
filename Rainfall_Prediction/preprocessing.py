@@ -98,7 +98,7 @@ def save_preprocessed_data(df, file_path='preprocessed_rainfall.csv'):
 
 def main():
     # Specify the path to your downloaded CSV file from Kaggle
-    file_path = 'Datasets/rainfall_in_india.csv'  # Update this path
+    file_path = 'Datasets/Rainfall/rainfall_in_india.csv'  # Update this path
 
     # Load data
     df = load_data(file_path)
